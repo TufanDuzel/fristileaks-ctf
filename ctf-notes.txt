@@ -1,0 +1,113 @@
+Phase 1: Reconnaissance & Web Enumeration
+Overview
+In this initial phase, I focused on identifying the target host within the local network and performing a comprehensive service discovery to map the attack surface.
+
+Technical Steps & Methodology
+Host Discovery: Identified the target at 10.0.2.9 using the predefined MAC address (08:00:27:A5:A6:76) to ensure consistency with the lab environment.
+
+Port Scanning: Executed an aggressive Nmap scan (nmap -T4 -A -v) which revealed:
+
+Port 80/tcp: Running Apache httpd 2.2.15 on CentOS.
+
+PHP/5.3.3: An outdated version, which might be susceptible to older vulnerabilities.
+
+Vulnerability Research: Conducted a web server assessment using Nikto. Key findings included:
+
+Active HTTP TRACE method (potential Cross-Site Tracing risk).
+
+Multiple entries in robots.txt (/cola, /sisi, /beer), which appeared to be decoys.
+
+Directory indexing enabled on /images/ and /icons/.
+
+Directory Brute-forcing & Intuition: After manually inspecting the disallowed entries and finding no immediate exploit, I expanded the search and discovered a hidden login panel at /fristi.
+
+Key Findings
+Target OS: Linux (CentOS)
+
+Entry Point: Potential administrative login interface discovered at http://10.0.2.9/fristi.
+
+Note: The presence of wp-config.php backup files was flagged by Nikto, suggesting a possible WordPress-related history or misconfiguration, although the primary focus shifted to the custom login portal.
+
+
+
+Phase 2: Exploitation & Initial Access
+Overview
+In this phase, I leveraged the discovered credentials to access the administrative portal and performed an unrestricted file upload to gain a remote shell on the target system.
+
+Technical Steps & Methodology
+Authentication Bypass: Using the credentials found during the enumeration phase (Username: eezeepz / Password: keKkeKkeKkeKkEkEk), I successfully logged into the /fristi/ administrative panel.
+
+Vulnerability Analysis: I identified a file upload functionality designed for image files. After a series of tests, I confirmed that the application had a weak file extension filter.
+
+Bypassing Filters: To bypass the server-side validation, I used a double extension technique. I renamed my PHP reverse shell to shell.php.png. This allowed the file to pass the "image-only" check while still being executable by the PHP engine in certain configurations.
+
+Payload Delivery: I uploaded the crafted PHP payload and located the upload directory at /fristi/uploads/.
+
+Gaining a Shell: I set up a Netcat listener on my local machine (nc -lvnp 1234) and triggered the payload by navigating to the uploaded file's URL. This resulted in a successful Reverse Shell, providing low-privileged access as the apache user.
+
+Key Findings
+Vulnerability: Broken Access Control & Unrestricted File Upload.
+
+Tooling: Burp Suite (for request manipulation), Pentestmonkey's PHP Reverse Shell, and Netcat.
+
+Access Level: Initial Access - apache (low-privilege user).
+
+
+
+Phase 3: Privilege Escalation & Lateral Movement
+Overview
+In this phase, I identified a misconfigured scheduled task (Cron Job) and exploited it to escalate my privileges from a web user (apache) to a system administrator (admin).
+
+Technical Steps & Methodology
+System Enumeration: Upon gaining initial access, I performed a deep dive into the internal file system and discovered a note from a user named "Jerry" in the /home/admin directory.
+
+Vulnerability Identification: The note revealed a scheduled task running with admin privileges. This task was designed to execute any command written in the /tmp/runthis file every minute. This is a classic example of an Insecure Cron Job vulnerability.
+
+Exploit Development: I initially attempted to write a direct Python command into the file, but encountered issues with shell escaping and special characters. To ensure stability, I developed a standalone Python reverse shell script (python-shell.py) and transferred it to the target machine's /tmp directory via a local web server (wget).
+
+Execution & Hijacking: I populated the /tmp/runthis file with a command to execute my Python script using the absolute path: echo "/usr/bin/python /tmp/python-shell.py" > /tmp/runthis. I also adjusted file permissions using chmod 777 to ensure the administrative task could read and execute my payload.
+
+Access Escalation: After the cron task triggered, I received a second reverse shell on my Netcat listener (nc -lvnp 4444). Running the whoami command confirmed that I had successfully transitioned to the admin user.
+
+Key Findings
+Vulnerability: Privilege Escalation via Insecure Cron Job.
+
+Technique: Task Hijacking / Command Injection.
+
+Current Access: User admin.
+
+
+
+Phase 4: Reverse Engineering & Root Privilege Escalation
+Overview
+In the final stage of the penetration test, I performed reverse engineering on a custom Python encryption script found within the admin directory to uncover the credentials required for full system compromise.
+
+Technical Steps & Methodology
+Code Analysis: I identified a script named crypt.py used by the system administrators to obfuscate passwords. By analyzing the source code, I determined the encryption flow: Plaintext ➡️ Base64 Encode ➡️ String Reversal ➡️ ROT13 Cipher.
+
+Decryption Script Development: To recover the original passwords, I developed a counter-script (decrypt.py) that reversed these operations in the following order: ROT13 Decrypt ➡️ String Reversal ➡️ Base64 Decode.
+
+Credential Recovery: I applied my decryption tool to the encoded strings found in sensitive files, such as whoisyourgodnow.txt. This successfully revealed the cleartext password for the root account.
+
+Full System Compromise: Using the recovered credentials, I performed a user switch (su -) to the root user. This provided me with unrestricted access to the entire operating system, effectively completing the mission.
+
+Key Findings
+Security Misconfiguration: Relying on "security through obscurity" by using custom, reversible encryption scripts is a critical weakness.
+
+Information Leakage: Storing encoded administrative passwords in world-readable files facilitated the final escalation.
+
+Final Access Level: ROOT / UID 0 (Full Administrative Control).
+
+
+
+Phase 5: Final Escalation to Root
+
+Discovery: Identified a custom binary named doCom with the SUID bit set, owned by root.
+
+Privilege Transition: Discovered that the admin user could execute this binary under the context of the fristi user using sudo.
+
+The Exploit: Leveraged the doCom binary to execute a Python reverse shell with elevated privileges. Since the binary executes commands as the owner (root), the resulting connection granted a root-level interactive shell.
+
+Payload: sudo -u fristi ./doCom /usr/bin/python /tmp/pythonshell.py
+
+Outcome: Captured the final flag in /root/ and achieved 100% compromise of the target.
